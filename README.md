@@ -1,4 +1,4 @@
-# Traefik DNS Automation
+# DNSherpa
 
 **Automatically manage DNS records for your Docker services!**
 
@@ -31,7 +31,7 @@ Create a `docker-compose.yml`:
 
 ```yaml
 services:
-  traefik-dns-automator:
+  DNSherpa:
     image: ghcr.io/legandaryra/dnsherpa:latest
     restart: unless-stopped
     environment:
