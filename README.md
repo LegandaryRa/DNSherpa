@@ -32,7 +32,7 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   traefik-dns-automator:
-    image: your-registry/traefik-dns-automation:latest
+    image: ghcr.io/legandaryra/dnsherpa:latest
     restart: unless-stopped
     environment:
       # === Core Settings ===
