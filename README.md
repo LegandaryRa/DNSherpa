@@ -31,7 +31,7 @@ Create a `docker-compose.yml`:
 
 ```yaml
 services:
-  DNSherpa:
+  dnsherpa:
     image: ghcr.io/legandaryra/dnsherpa:latest
     restart: unless-stopped
     environment:
