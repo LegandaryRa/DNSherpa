@@ -1,14 +1,15 @@
 # DNSherpa
 
-**Automatically manage DNS records for your Docker services!**
+**Automatically manage DNS records for your Docker services and Proxmox VMs!**
 
-When you deploy a Docker service with Traefik labels, this tool automatically creates DNS records so your domains work instantly. No more manual DNS management!
+When you deploy a Docker service with Traefik labels or manage VMs in Proxmox, DNSherpa automatically creates DNS records so your domains work instantly. No more manual DNS management!
 
 ## ✨ What It Does
 
 🔄 **Monitors your Docker containers** and watches for Traefik labels  
 🏷️ **Finds domain names** in your `Host()` rules  
-📝 **Creates DNS records** automatically in your DNS server  
+🚀 **Discovers Proxmox VMs/containers** and creates DNS records from VM names
+📝 **Creates DNS records** automatically in your DNS server with A and AAAA support
 
 ## 🎯 Perfect For
 
@@ -19,9 +20,10 @@ When you deploy a Docker service with Traefik labels, this tool automatically cr
 
 ## 📋 What You Need
 
-- Docker services with Traefik labels
+- Docker services with Traefik labels (for Docker agent mode)
+- Proxmox VE cluster with API tokens (for Proxmox agent mode)  
 - An etcd server (for DNS storage)
-- CoreDNS (as your DNS server)
+- CoreDNS with etcd plugin (as your DNS server)
 
 ## 🚀 Quick Start
 
@@ -29,41 +31,85 @@ When you deploy a Docker service with Traefik labels, this tool automatically cr
 
 Create a `docker-compose.yml`:
 
+## Docker Agent Mode (monitors local Docker containers)
+
 ```yaml
 services:
-  dnsherpa:
+  dnsherpa-docker:
     image: ghcr.io/legandaryra/dnsherpa:latest
     restart: unless-stopped
     environment:
       # === Core Settings ===
-      # Where is your etcd server?
+      - AGENT_MODE=docker
       - ETCD_ENDPOINTS=192.168.1.10:2379,192.168.1.11:2379
-      
-      # Where should domains point? (Pick one - or omit to auto-detect)
-      - DNS_TARGET=traefik.yourdomain.com     # Use hostname (CNAME)
-      # - DNS_TARGET=192.168.1.100             # Use IPv4 (A record)  
-      # - DNS_TARGET=2001:db8::1               # Use IPv6 (AAAA record)
-      
-      # What's your domain? (only needed if hostname is not FQDN)
-      - DOMAIN=yourdomain.com
-      
-      # === etcd Settings ===
-      # DNS storage path in etcd (default: /skydns)
+      - DOMAIN=yourdomain.com  # Only needed if hostname not FQDN
+      - LOG_LEVEL=info
+      - LOG_FORMAT=text
       - ETCD_PREFIX=/skydns
       
-      # === TLS Configuration (optional) ===
-      # Enable TLS connection to etcd
-      # - ETCD_TLS=true
-      # - ETCD_CA_FILE=/certs/ca.pem
-      # - ETCD_CERT_FILE=/certs/client.pem
-      # - ETCD_KEY_FILE=/certs/client-key.pem
+      # === Docker Settings (optional) ===
+      - DNS_TARGET=traefik.yourdomain.com  # Auto-detected if omitted
     volumes:
-      # Required volumes
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /etc/hostname:/host/hostname:ro
+      - /etc/hostname:/host/hostname:ro  # For auto-detection
+```
+
+## Proxmox Agent Mode (monitors Proxmox cluster)
+
+```yaml
+services:
+  dnsherpa-proxmox:
+    image: ghcr.io/legandaryra/dnsherpa:latest
+    restart: unless-stopped
+    environment:
+      # === Core Settings ===
+      - AGENT_MODE=proxmox
+      - ETCD_ENDPOINTS=192.168.1.10:2379,192.168.1.11:2379
+      - DOMAIN=yourdomain.com  # Only needed if VM names not FQDN
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json  # JSON for production
+      - ETCD_PREFIX=/skydns
       
-      # Optional: TLS certificates (if using ETCD_TLS=true)
-      # - ./certs:/certs:ro
+      # === Proxmox Settings ===
+      - PROXMOX_API_URL=https://pve.yourdomain.com:8006
+      - PROXMOX_TOKEN_ID=dnsherpa@pve
+      - PROXMOX_TOKEN_SECRET=your-token-secret
+      - PROXMOX_VERIFY_SSL=false
+      - PROXMOX_POLL_INTERVAL=30s
+      - PROXMOX_INTERFACE=eth0
+      - PROXMOX_MULTI_IPV4=first
+```
+
+## Hybrid Mode (monitors both Docker and Proxmox)
+
+```yaml
+services:
+  dnsherpa-hybrid:
+    image: ghcr.io/legandaryra/dnsherpa:latest
+    restart: unless-stopped
+    environment:
+      # === Core Settings ===
+      - AGENT_MODE=hybrid
+      - ETCD_ENDPOINTS=192.168.1.10:2379,192.168.1.11:2379
+      - DOMAIN=yourdomain.com  # Only needed if hostnames/VM names not FQDN
+      - LOG_LEVEL=info
+      - LOG_FORMAT=text
+      - ETCD_PREFIX=/skydns
+      
+      # === Docker Settings (optional) ===
+      - DNS_TARGET=traefik.yourdomain.com  # Auto-detected if omitted
+      
+      # === Proxmox Settings ===
+      - PROXMOX_API_URL=https://pve.yourdomain.com:8006
+      - PROXMOX_TOKEN_ID=dnsherpa@pve
+      - PROXMOX_TOKEN_SECRET=your-token-secret
+      - PROXMOX_VERIFY_SSL=false
+      - PROXMOX_POLL_INTERVAL=30s
+      - PROXMOX_INTERFACE=eth0
+      - PROXMOX_MULTI_IPV4=first
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/hostname:/host/hostname:ro  # For Docker auto-detection
 ```
 
 ### 2. Start the Service
@@ -87,34 +133,69 @@ services:
 
 The DNS record for `webapp.yourdomain.com` is created automatically!
 
+### 4. Configure Proxmox VMs (for Proxmox mode)
+
+DNSherpa automatically creates DNS records for all running VMs/containers based on their names:
+
+**VM Examples:**
+- VM name: `web-server` → DNS: `web-server.yourdomain.com`
+- VM name: `db.mydomain.com` → DNS: `db.mydomain.com` (already FQDN)
+
+**VM Tag Options:**
+```bash
+# Skip DNS record creation
+dnsherpa-skip
+
+# Use specific IP addresses (highest priority)
+dnsherpa-ip:192.168.1.100,2001:db8::1
+
+# Use specific network interface
+dnsherpa-interface:ens18
+```
+
+**Create API Token in Proxmox:**
+1. Go to Datacenter → API Tokens
+2. Add token: User `dnsherpa@pve`, Token ID `dnsherpa`
+3. Uncheck "Privilege Separation"
+4. Use the generated secret in `PROXMOX_TOKEN_SECRET`
+
 ## 🔧 Configuration Options
 
 ### Core Settings
 | Setting | What It Does | Default | Example |
 |---------|--------------|---------|---------|
+| `AGENT_MODE` | Which services to monitor | `docker` | `docker`, `proxmox`, `hybrid` |
 | `ETCD_ENDPOINTS` | Your etcd server addresses | `172.16.0.221:2379,172.16.0.222:2379` | `192.168.1.10:2379,192.168.1.11:2379` |
-| `DNS_TARGET` | Where domains should point | Auto-detected from hostname | `traefik.mydomain.com` |
-| `DOMAIN` | Your domain name (used if hostname not FQDN) | None | `mydomain.com` |
-
-### etcd Settings
-| Setting | Description | Default | Example |
-|---------|-------------|---------|---------|
+| `DOMAIN` | Your domain name (only needed when hostname/VM name is not FQDN) | None | `mydomain.com` |
+| `LOG_LEVEL` | Logging verbosity level | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+| `LOG_FORMAT` | Log output format | `text` | `text`, `json` |
 | `ETCD_PREFIX` | DNS storage path in etcd | `/skydns` | `/skydns` |
-
-### TLS Configuration
-| Setting | Description | Default | Example |
-|---------|-------------|---------|---------|
 | `ETCD_TLS` | Enable TLS connection to etcd | `false` | `true` |
 | `ETCD_CA_FILE` | Path to CA certificate file | None | `/certs/ca.pem` |
 | `ETCD_CERT_FILE` | Path to client certificate file | None | `/certs/client.pem` |
 | `ETCD_KEY_FILE` | Path to client private key file | None | `/certs/client-key.pem` |
 
-### DNS Target Detection
-The `DNS_TARGET` is automatically detected using this priority:
-1. **Environment variable**: If `DNS_TARGET` is set, use it directly
-2. **Hostname file**: Read `/host/hostname` (requires mounting `/etc/hostname:/host/hostname:ro`)
-3. **FQDN check**: If hostname contains dots, use as-is
-4. **Domain append**: If hostname is not FQDN, append `DOMAIN` environment variable
+### Docker Settings
+| Setting | Description | Default | Example |
+|---------|-------------|---------|---------|
+| `DNS_TARGET` | Where domains should point. Can be hostname or IP address (IPv4/IPv6). Optional - auto-detected from hostname if not set. | Auto-detected from hostname | `traefik.mydomain.com`, `192.168.1.100`, `2001:db8::1` |
+
+#### DNS Target Auto-Detection
+When `DNS_TARGET` is not specified, it's automatically detected using this priority:
+1. **Hostname file**: Read `/host/hostname` (requires mounting `/etc/hostname:/host/hostname:ro`)
+2. **FQDN check**: If hostname contains dots, use as-is
+3. **Domain append**: If hostname is not FQDN, append `DOMAIN` environment variable
+
+### Proxmox Settings
+| Setting | Description | Default | Example |
+|---------|-------------|---------|---------|
+| `PROXMOX_API_URL` | Proxmox API endpoint (without /api2/json) | None | `https://pve.domain.com:8006` |
+| `PROXMOX_TOKEN_ID` | API token ID | None | `dnsherpa@pve` |
+| `PROXMOX_TOKEN_SECRET` | API token secret | None | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `PROXMOX_VERIFY_SSL` | Verify SSL certificates | `false` | `true` |
+| `PROXMOX_POLL_INTERVAL` | How often to check for changes | `30s` | `30s`, `1m`, `2m` |
+| `PROXMOX_INTERFACE` | Default network interface | `eth0` | `ens18`, `vmbr0` |
+| `PROXMOX_MULTI_IPV4` | Multiple IPv4 strategy | `first` | `first`, `all` |
 
 ### DNS Record Settings
 | Setting | Description | Value |
@@ -123,55 +204,78 @@ The `DNS_TARGET` is automatically detected using this priority:
 
 ## 📊 Record Types
 
-The tool automatically picks the right DNS record type:
-
+**Docker Mode:**
+- Uses `DNS_TARGET` setting (Docker Settings) to determine record type
 - **Hostname** → CNAME record (`traefik.domain.com`)
 - **IPv4 Address** → A record (`192.168.1.100`)  
 - **IPv6 Address** → AAAA record (`2001:db8::1`)
+
+**Proxmox Mode:**
+- Creates A and AAAA records directly from VM IP addresses
+- **IPv4 addresses** → A records (e.g., `/skydns/com/domain/vm-name/a1`)
+- **IPv6 addresses** → AAAA records (e.g., `/skydns/com/domain/vm-name/aaaa1`)
+- Supports multiple IP addresses per VM with CoreDNS-compatible key suffixes
 
 ## 🔍 Troubleshooting
 
 ### Container Won't Start?
 
-Check the logs: `docker logs traefik-dns-automator`
+Check the logs: `docker logs dnsherpa`
 
 Common issues:
-- **"Cannot read /host/hostname"**: Add `-v /etc/hostname:/host/hostname:ro`
-- **"DOMAIN not set"**: Add `DOMAIN=yourdomain.com` 
-- **"Cannot connect to etcd"**: Check your `ETCD_ENDPOINTS`
+- **"Cannot read /host/hostname"**: Add `-v /etc/hostname:/host/hostname:ro` (needed for Docker mode auto-detection)
+- **"DOMAIN not set"**: Add `DOMAIN=yourdomain.com` (Core Settings - only needed if hostname/VM name not FQDN)
+- **"Cannot connect to etcd"**: Check your `ETCD_ENDPOINTS` (Core Settings)
 
 ### DNS Records Not Created?
 
 1. Check container labels: `docker inspect <container>`
-2. Verify etcd connection: `docker logs traefik-dns-automator`
+2. Verify etcd connection: `docker logs dnsherpa`
 3. Test DNS resolution: `nslookup webapp.yourdomain.com`
 
 ## 💡 Examples
 
-### Home Lab Setup
+### Home Lab Setup (Docker Mode)
 ```yaml
 environment:
+  - AGENT_MODE=docker
+  - ETCD_ENDPOINTS=192.168.1.10:2379
   - DNS_TARGET=192.168.1.100          # Point to your server IP
   - DOMAIN=homelab.local
 ```
 
-### Production Setup  
+### Production Setup (Docker Mode)
 ```yaml
 environment:
+  - AGENT_MODE=docker
+  - ETCD_ENDPOINTS=etcd1:2379,etcd2:2379
   - DNS_TARGET=lb.company.com         # Point to load balancer
   - DOMAIN=company.com
 ```
 
-### IPv6 Setup
+### IPv6 Setup (Docker Mode)
 ```yaml
 environment:
+  - AGENT_MODE=docker
+  - ETCD_ENDPOINTS=192.168.1.10:2379
   - DNS_TARGET=2001:db8::100          # Point to IPv6 address
   - DOMAIN=example.com
 ```
 
+### Proxmox Setup
+```yaml
+environment:
+  - AGENT_MODE=proxmox
+  - ETCD_ENDPOINTS=192.168.1.10:2379
+  - DOMAIN=homelab.local              # Only needed if VM names not FQDN
+  - PROXMOX_API_URL=https://pve.homelab.local:8006
+  - PROXMOX_TOKEN_ID=dnsherpa@pve
+  - PROXMOX_TOKEN_SECRET=your-token-secret
+```
+
 ## 🔐 TLS Security Example
 
-For secure etcd connections:
+For secure etcd connections (these are Core Settings, available in all modes):
 ```yaml
 environment:
   - ETCD_TLS=true
@@ -200,7 +304,7 @@ yourdomain.com:53 {
 Check what's happening:
 ```bash
 # View logs
-docker logs -f traefik-dns-automator
+docker logs -f dnsherpa
 
 # Example output:
 # Creating CNAME record: webapp.mydomain.com -> traefik.mydomain.com  
